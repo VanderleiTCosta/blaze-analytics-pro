@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-slate-950 text-white;
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+}
+
+.blaze-ball {
+  @apply w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shadow-lg;
+}
+
+.ball-red { @apply bg-rose-600; }
+.ball-black { @apply bg-slate-800; }
+.ball-white { @apply bg-white text-black; }
+
+::-webkit-scrollbar {
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-slate-900;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-700 rounded-full;
+}
