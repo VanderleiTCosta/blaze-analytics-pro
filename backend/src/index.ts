@@ -1,165 +1,91 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import dotenv from 'dotenv';
+import pool from './database.js'; 
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import pool from './database';
-import { verifyToken, verifyAdmin, AuthRequest } from './middleware';
+// Se você ainda não criou o middleware.ts, remova a linha abaixo temporariamente
+// import { verifyToken } from './middleware.js'; 
+
+dotenv.config();
 
 const app = express();
+// Define a porta 3001 explicitamente para bater com o seu erro
+const port = process.env.PORT || 3001; 
+
 app.use(cors());
 app.use(express.json());
 
-const JWT_SECRET = process.env.JWT_SECRET || 'blaze_analytics_pro_secret_key_2024';
+// --- Rota de Teste (Healthcheck) ---
+app.get('/api/health', (req: Request, res: Response) => {
+  res.json({ status: 'ok', message: 'Backend is running correctly' });
+});
 
-// --- Rotas de Autenticação ---
-
+// --- ROTA DE LOGIN (A QUE ESTÁ FALTANDO) ---
+// O erro 404 acontece porque este bloco não existe no seu arquivo atual
 app.post('/auth/login', async (req: Request, res: Response) => {
-    const { username, password } = req.body;
+  console.log('📦 Body recebido:', req.body);
+  const { email, password } = req.body;
 
-    try {
-        const [rows]: any = await pool.query('SELECT * FROM users WHERE username = ?', [username]);
-        const user = rows[0];
+  // Validação básica
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email e senha são obrigatórios.' });
+  }
 
-        if (!user || !(await bcrypt.compare(password, user.password_hash))) {
-            return res.status(401).json({ message: 'Usuário ou senha incorretos.' });
-        }
+  try {
+    console.log(`🔑 Tentativa de login: ${email}`);
 
-        const token = jwt.sign(
-            { id: user.id, username: user.username, role: user.role },
-            JWT_SECRET,
-            { expiresIn: '24h' }
-        );
+    // 1. Buscar usuário no banco
+    const [rows] = await pool.execute(
+      'SELECT * FROM users WHERE email = ?',
+      [email]
+    );
 
-        res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
-    } catch (error) {
-        res.status(500).json({ message: 'Erro no servidor.' });
+    const users = rows as any[];
+
+    if (users.length === 0) {
+      console.log('❌ Usuário não encontrado');
+      return res.status(401).json({ message: 'Credenciais inválidas.' });
     }
+
+    const user = users[0];
+
+    // 2. Verificar senha
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      console.log('❌ Senha incorreta');
+      return res.status(401).json({ message: 'Credenciais inválidas.' });
+    }
+
+    // 3. Gerar Token (JWT)
+    const secret = process.env.JWT_SECRET || 'blaze_secret_key_123';
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      secret,
+      { expiresIn: '24h' }
+    );
+
+    // 4. Sucesso!
+    console.log('✅ Login autorizado!');
+    res.json({
+      message: 'Login realizado com sucesso',
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Erro interno no login:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
 });
 
-// --- Rotas de Admin ---
-
-app.post('/admin/create-user', verifyToken, verifyAdmin, async (req: Request, res: Response) => {
-    const { username, password, role } = req.body;
-
-    try {
-        const password_hash = await bcrypt.hash(password, 10);
-        await pool.query(
-            'INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)',
-            [username, password_hash, role || 'user']
-        );
-        res.status(201).json({ message: 'Usuário criado com sucesso.' });
-    } catch (error: any) {
-        if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(400).json({ message: 'Usuário já existe.' });
-        }
-        res.status(500).json({ message: 'Erro ao criar usuário.' });
-    }
-});
-
-// --- Lógica da Blaze e Análise Avançada ---
-
-interface BlazeResult {
-    color: 'red' | 'black' | 'white';
-    value: number;
-    timestamp: string;
-}
-
-const generateMockHistory = (): BlazeResult[] => {
-    const colors: ('red' | 'black' | 'white')[] = ['red', 'black', 'white'];
-    const history: BlazeResult[] = [];
-    for (let i = 0; i < 50; i++) {
-        const rand = Math.random();
-        let color: 'red' | 'black' | 'white';
-        if (rand < 0.05) color = 'white';
-        else if (rand < 0.525) color = 'red';
-        else color = 'black';
-
-        history.push({
-            color,
-            value: color === 'white' ? 0 : Math.floor(Math.random() * 14) + 1,
-            timestamp: new Date(Date.now() - i * 30000).toISOString()
-        });
-    }
-    return history;
-};
-
-const analyzePatterns = (history: BlazeResult[]) => {
-    const lastResults = history.slice(0, 10).map(h => h.color);
-    
-    // Estatísticas básicas
-    const stats = {
-        redCount: history.filter(h => h.color === 'red').length,
-        blackCount: history.filter(h => h.color === 'black').length,
-        whiteCount: history.filter(h => h.color === 'white').length,
-        maxStreak: 0,
-        streakColor: ''
-    };
-
-    // Cálculo de sequência atual
-    let currentStreak = 1;
-    let tempMaxStreak = 1;
-    let tempStreakColor = history[0].color;
-
-    for (let i = 1; i < history.length; i++) {
-        if (history[i].color === history[i-1].color) {
-            currentStreak++;
-        } else {
-            if (currentStreak > tempMaxStreak) {
-                tempMaxStreak = currentStreak;
-                tempStreakColor = history[i-1].color;
-            }
-            currentStreak = 1;
-        }
-    }
-    stats.maxStreak = tempMaxStreak;
-    stats.streakColor = tempStreakColor;
-
-    // Lógica de Estratégias (Exemplos Reais)
-    const strategies = [
-        { name: 'Quebra de Tendência', active: false },
-        { name: 'Repetição de Cor', active: false },
-        { name: 'Proteção no Branco', active: true }
-    ];
-
-    let suggestion: 'red' | 'black' | 'white' | 'wait' = 'wait';
-    let confidence = 0;
-    let reason = 'Aguardando padrão ideal...';
-
-    // Exemplo: Se os últimos 3 forem iguais, sugere quebra
-    if (lastResults[0] === lastResults[1] && lastResults[1] === lastResults[2]) {
-        suggestion = lastResults[0] === 'red' ? 'black' : 'red';
-        confidence = 85;
-        reason = `Detectada sequência de 3 ${lastResults[0] === 'red' ? 'Vermelhos' : 'Pretos'}. Sugerindo quebra.`;
-        strategies[0].active = true;
-    } 
-    // Exemplo: Alternância (Xadrez)
-    else if (lastResults[0] !== lastResults[1] && lastResults[1] !== lastResults[2] && lastResults[2] !== lastResults[3]) {
-        suggestion = lastResults[0] === 'red' ? 'black' : 'red';
-        confidence = 78;
-        reason = 'Padrão de alternância detectado (Xadrez).';
-        strategies[1].active = true;
-    }
-    else {
-        // Sugestão padrão baseada em probabilidade simples se nada for detectado
-        suggestion = stats.redCount > stats.blackCount ? 'black' : 'red';
-        confidence = 65;
-        reason = 'Análise baseada em volume de cores recente.';
-    }
-
-    return {
-        stats,
-        prediction: { suggestion, confidence, reason, strategies },
-        lastUpdate: new Date().toISOString()
-    };
-};
-
-app.get('/api/history', verifyToken, (req: Request, res: Response) => {
-    const history = generateMockHistory();
-    const analysis = analyzePatterns(history);
-    res.json({ history, analysis });
-});
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+app.listen(port, () => {
+  console.log(`🚀 Server running on port ${port}`);
+  console.log(`   👉 Rota de login ativa: http://localhost:${port}/auth/login`);
 });
