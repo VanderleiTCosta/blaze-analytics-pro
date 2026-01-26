@@ -330,7 +330,7 @@ const Dashboard: React.FC = () => {
           {/* ESTATÍSTICAS */}
           <div className="bg-slate-900 rounded-[2rem] p-6 border border-slate-800 shadow-xl flex flex-col justify-between">
             <h3 className="text-slate-400 font-black text-xs uppercase tracking-widest mb-4 flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-rose-500" /> Tendência (50x)
+              <TrendingUp className="w-4 h-4 text-rose-500" /> Tendência (100x)
             </h3>
             
             <div className="space-y-6">
@@ -360,7 +360,7 @@ const Dashboard: React.FC = () => {
             <div className="mt-auto pt-6 border-t border-slate-800">
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                     <AlertCircle className="w-4 h-4" />
-                    <span>Dados baseados nas últimas 50 rodadas.</span>
+                    <span>Dados baseados nas últimas 100 rodadas.</span>
                 </div>
                 <div className="text-[10px] text-slate-600 mt-2 text-right">
                   Última atualização: {new Date(data.analysis.lastUpdate).toLocaleTimeString('pt-BR')}

@@ -204,40 +204,42 @@ export class BlazeWatcher {
     const mappedColor = this.mapColor(data.color);
 
     try {
-      // Verifica duplicidade 
-      // Se for SCRAPER, usa lógica flexível (mesmo número/cor recente)
-      // Se for SOCKET, usa ID exato ou flexível
-      
-      let sql = 'SELECT id FROM history WHERE id = ?';
-      let params: any[] = [data.id];
+      // Lógica de desduplicação e ID maior:
+      // Verificamos o último registro inserido para garantir que estamos salvando apenas novos dados
+      // e mantendo a ordem cronológica correta.
+      const [lastRows] = await pool.query('SELECT id, number, result FROM history ORDER BY id DESC LIMIT 1');
+      const lastResult = (lastRows as any[])[0];
 
-      // Lógica de desduplicação robusta
-      // Se já existe um registro com mesmo NÚMERO e COR nos últimos 40 segundos, ignoramos
-      // Isso evita que o Scraper pegue o que o Socket acabou de pegar e vice-versa
-    //   const [recentDup] = await pool.query(
-    //     'SELECT id FROM history WHERE created_at > NOW() - INTERVAL 40 SECOND AND number = ? AND result = ?',
-    //     [data.roll, mappedColor]
-    //   );
-
-    //   if ((recentDup as any[]).length > 0) return;
+      // Se o número e a cor forem iguais ao último, ignoramos para evitar duplicatas do Scraper/Socket
+      if (lastResult && lastResult.number === data.roll && lastResult.result === mappedColor) {
+        return;
+      }
 
       const icon = source === 'SOCKET' ? '⚡' : '🕷️';
       console.log(`${icon} [${source}] Novo: ${mappedColor.toUpperCase()} (${data.roll})`);
 
+      // Inserimos o novo registro. O ID será maior automaticamente (AUTO_INCREMENT)
       await pool.execute(
         'INSERT INTO history (result, number, created_at) VALUES (?, ?, ?)',
         [mappedColor, data.roll, new Date(data.created_at)]
       );
 
-      // Limpeza
-      await pool.execute(`
-        DELETE FROM history 
-        WHERE id NOT IN (
-          SELECT id FROM (
-            SELECT id FROM history ORDER BY created_at DESC LIMIT 100
-          ) as subquery
-        )
-      `);
+      // Lógica de Pilha: Manter apenas os últimos 100 registros
+      // Quando chegar em 100, apaga o mais antigo (ID menor) e mantém o novo (ID maior)
+      const [countRows] = await pool.query('SELECT COUNT(*) as total FROM history');
+      const total = (countRows as any[])[0].total;
+
+      if (total > 100) {
+        console.log(`🧹 Pilha cheia (${total}). Removendo registros antigos...`);
+        await pool.execute(`
+          DELETE FROM history 
+          WHERE id NOT IN (
+            SELECT id FROM (
+              SELECT id FROM history ORDER BY id DESC LIMIT 100
+            ) as subquery
+          )
+        `);
+      }
     } catch (error) {
       console.error('Erro DB:', error);
     }

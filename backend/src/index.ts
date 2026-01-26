@@ -130,7 +130,7 @@ app.put('/auth/me/password', authenticateToken, async (req: Request, res: Respon
 
 app.get('/dashboard', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM history ORDER BY created_at DESC LIMIT 50');
+    const [rows] = await pool.query('SELECT * FROM history ORDER BY id DESC LIMIT 100');
     const history = rows as any[];
     
     const total = history.length || 1;
