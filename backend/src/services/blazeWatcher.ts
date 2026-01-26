@@ -45,7 +45,7 @@ export class BlazeWatcher {
     let browser;
     try {
       browser = await puppeteer.launch({
-        headless: false, // Roda sem interface gráfica
+        headless: true, // Roda sem interface gráfica
         args: ['--no-sandbox', '--disable-setuid-sandbox']
       });
 
@@ -214,12 +214,12 @@ export class BlazeWatcher {
       // Lógica de desduplicação robusta
       // Se já existe um registro com mesmo NÚMERO e COR nos últimos 40 segundos, ignoramos
       // Isso evita que o Scraper pegue o que o Socket acabou de pegar e vice-versa
-      const [recentDup] = await pool.query(
-        'SELECT id FROM history WHERE created_at > NOW() - INTERVAL 40 SECOND AND number = ? AND result = ?',
-        [data.roll, mappedColor]
-      );
+    //   const [recentDup] = await pool.query(
+    //     'SELECT id FROM history WHERE created_at > NOW() - INTERVAL 40 SECOND AND number = ? AND result = ?',
+    //     [data.roll, mappedColor]
+    //   );
 
-      if ((recentDup as any[]).length > 0) return;
+    //   if ((recentDup as any[]).length > 0) return;
 
       const icon = source === 'SOCKET' ? '⚡' : '🕷️';
       console.log(`${icon} [${source}] Novo: ${mappedColor.toUpperCase()} (${data.roll})`);
