@@ -11,20 +11,23 @@ export interface BlazeResult {
 
 export class BlazeScraper {
     private isRunning: boolean = false;
-    private isProcessing: boolean = false; // 🔒 Trava para evitar sobreposição
+    private isProcessing: boolean = false; // Trava para não encavalar coletas
     private browser: Browser | null = null;
     private page: Page | null = null;
     private interval: NodeJS.Timeout | null = null;
     
-    // URL com Modal V2 forçado
-    private readonly BLAZE_URL = 'https://blaze.bet.br/pt/games/double?modal=double_history-v2_index&roomId=1';
+    // Variável para memória visual (O que estava na tela na última checagem?)
+    private lastSeenNumber: string = '';
+
+    // URL Padrão (Sem modal, pois vamos monitorar a home primeiro)
+    private readonly BLAZE_URL = 'https://blaze.bet.br/pt/games/double';
     
-    // Aumentei levemente o intervalo para dar tempo do reload acontecer sem estresse
-    private readonly INTERVAL_MS = 8000; // 15 segundos (Reload leva uns 3-5s)
+    // Intervalo de Monitoramento Passivo (Olhar a barra)
+    private readonly MONITOR_INTERVAL_MS = 1000; // 1 segundo (Muito rápido e seguro)
     private readonly MAX_RECORDS = 2000;
 
     constructor() {
-        console.log(`🔧 BlazeScraper inicializado (Refresh Mode)`);
+        console.log(`🔧 BlazeScraper inicializado (Modo Híbrido: Monitor Passivo -> Coleta Ativa)`);
     }
 
     async start(): Promise<void> {
@@ -33,31 +36,40 @@ export class BlazeScraper {
             return;
         }
 
-        console.log('🚀 Iniciando BlazeScraper com Auto-Refresh...');
+        console.log('🚀 Iniciando BlazeScraper...');
         this.isRunning = true;
 
         try {
             await this.initBrowser();
             
-            // Primeira coleta
+            // Primeira coleta forçada para popular o banco e calibrar o lastSeenNumber
+            console.log('🏁 Realizando coleta inicial...');
             await this.collectAndClean();
-            
-            // Loop Infinito Protegido
-            this.interval = setInterval(async () => {
-                if (this.isProcessing) {
-                    console.log('⏳ Scraper ainda processando ciclo anterior, pulando...');
-                    return;
-                }
-                try {
-                    await this.collectAndClean();
-                } catch (error) {
-                    console.error('❌ Erro no ciclo:', error);
-                }
-            }, this.INTERVAL_MS);
 
-            console.log(`✅ BlazeScraper rodando a cada ${this.INTERVAL_MS/1000} segundos`);
+            // =================================================================
+            // LOOP DE MONITORAMENTO (O Segredo da Performance)
+            // =================================================================
+            this.interval = setInterval(async () => {
+                // Se já estiver coletando (abrindo modal), não atrapalha
+                if (this.isProcessing) return;
+
+                try {
+                    // 1. Apenas olha a barra horizontal (Leve)
+                    const hasNewRound = await this.checkMainBarForChanges();
+
+                    // 2. Se mudou o número, dispara a coleta detalhada (Pesada)
+                    if (hasNewRound) {
+                        console.log('⚡ Novo giro detectado! Iniciando coleta detalhada...');
+                        await this.collectAndClean();
+                    }
+                } catch (error) {
+                    console.error('❌ Erro no monitoramento:', error);
+                }
+            }, this.MONITOR_INTERVAL_MS);
+
+            console.log(`✅ Monitor visual ativo a cada ${this.MONITOR_INTERVAL_MS}ms`);
         } catch (error) {
-            console.error('❌ Erro ao iniciar:', error);
+            console.error('❌ Erro ao iniciar scraper:', error);
             await this.stop();
             throw error;
         }
@@ -96,7 +108,7 @@ export class BlazeScraper {
 
         this.page = await this.browser.newPage();
         
-        // Headers para parecer humano e evitar bloqueios
+        // Headers para evitar detecção
         await this.page.setExtraHTTPHeaders({
             'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
         });
@@ -105,55 +117,130 @@ export class BlazeScraper {
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         );
 
-        this.page.setDefaultTimeout(45000);
+        this.page.setDefaultTimeout(30000);
         
-        // A navegação inicial acontece no performScraping agora via reload
-        // Mas precisamos abrir a primeira vez
-        console.log('🌐 Abrindo Blaze pela primeira vez...');
-        await this.page.goto(this.BLAZE_URL, { waitUntil: 'domcontentloaded' });
+        console.log('🌐 Acessando Blaze...');
+        await this.page.goto(this.BLAZE_URL, { waitUntil: 'networkidle2' });
+        
+        // Aguarda a barra de recentes carregar (para o monitor funcionar)
+        await this.page.waitForSelector('.entries', { timeout: 60000 }).catch(() => {
+            console.log('⚠️ Barra de entries demorou, mas seguindo...');
+        });
     }
 
-    async collectAndClean(): Promise<BlazeResult[]> {
-        this.isProcessing = true; // 🔒 Bloqueia novas execuções
-        console.log('🔄 Iniciando ciclo de coleta (Refresh + Scrap)...');
+    // ========================================================================
+    // 👁️ MONITOR PASSIVO (Olha a barra horizontal)
+    // ========================================================================
+    private async checkMainBarForChanges(): Promise<boolean> {
+        if (!this.page) return false;
 
         try {
-            const results = await this.performScraping();
+            // Pega o número mais recente da barra horizontal (.entries > .entry > .number)
+            const latestResult = await this.page.evaluate(() => {
+                // Tenta seletor padrão da Blaze para a barra
+                const entry = document.querySelector('.entries .entry:first-child .number'); 
+                // Fallback caso seja branco (às vezes a classe muda ou não tem texto number direto)
+                const entryBox = document.querySelector('.entries .entry:first-child .sm-box');
+                
+                if (entry) return entry.textContent?.trim();
+                if (entryBox) return entryBox.textContent?.trim() || 'BRANCO'; // Se for branco as vezes vem vazio
+                
+                return null;
+            });
+
+            if (!latestResult) return false;
+
+            // Compara com a memória
+            if (latestResult !== this.lastSeenNumber) {
+                // Se for a primeira vez rodando, apenas salva e não dispara (evita falso positivo no boot)
+                if (this.lastSeenNumber === '') {
+                    this.lastSeenNumber = latestResult;
+                    return false; 
+                }
+
+                console.log(`👀 Mudança visual: ${this.lastSeenNumber} -> ${latestResult}`);
+                this.lastSeenNumber = latestResult;
+                return true; // GATILHO ATIVADO
+            }
+
+            return false;
+        } catch (error) {
+            // Erros de leitura aqui não são críticos, apenas ignora e tenta no prox segundo
+            return false;
+        }
+    }
+
+    // ========================================================================
+    // 🔄 CONTROLADOR DE COLETA
+    // ========================================================================
+    async collectAndClean(): Promise<BlazeResult[]> {
+        this.isProcessing = true; // Bloqueia novas coletas enquanto essa roda
+
+        try {
+            // Executa a sequência: Abrir Modal -> Ler -> Fechar
+            const results = await this.performActiveScraping();
             
             if (results.length > 0) {
+                // Atualiza o lastSeenNumber com o mais recente do modal para garantir sincronia
+                // O results[0] no array cru do scraping é o topo da lista (mais recente)
+                if (results[0]) {
+                    this.lastSeenNumber = results[0].number.toString();
+                }
+
                 await this.cleanAndSaveDatabase(results);
             }
             
             return results;
         } catch (error) {
-            console.error('❌ Erro na coleta:', error);
+            console.error('❌ Erro na coleta ativa:', error);
             
-            // Lógica de autorecuperação simples
+            // Autorecuperação
             if (error instanceof Error && error.message.includes('Target closed')) {
                 await this.reconnect();
             }
             return [];
         } finally {
-            this.isProcessing = false; // 🔓 Libera para o próximo ciclo
+            this.isProcessing = false; // Libera a trava
         }
     }
 
     // ========================================================================
-    // 🕷️ SCRAPING COM AUTO-REFRESH (Sua Solicitação)
+    // 🕷️ COLETA ATIVA (Abre Modal -> Lê -> Fecha)
     // ========================================================================
-    private async performScraping(): Promise<BlazeResult[]> {
+    private async performActiveScraping(): Promise<BlazeResult[]> {
         if (!this.page) throw new Error('Página não inicializada');
 
         try {
-            // 🔄 O SEGREDO: Reload ANTES de coletar.
-            // Isso fecha e reabre o modal (devido à URL) e garante dados frescos.
-            // Usamos 'domcontentloaded' que é mais rápido que carregar todas as imagens.
-            // console.log('🔄 Recarregando página para atualizar modal...');
-            await this.page.reload({ waitUntil: 'domcontentloaded' });
+            // 1. ABRIR MODAL (Se não estiver aberto)
+            const isModalOpen = await this.page.$('.history__double__center');
             
-            // Aguarda o elemento chave aparecer (Prova que o modal abriu e carregou)
-            await this.page.waitForSelector('.history__double__center', { timeout: 20000 });
+            if (!isModalOpen) {
+                // console.log('🔘 Abrindo modal para pegar timestamp preciso...');
 
+                // Tenta esperar o container de botões
+                try {
+                    await this.page.waitForSelector('.buttons-history button', { timeout: 5000 });
+                } catch (e) {}
+
+                await this.page.evaluate(() => {
+                    // Tenta clicar no botão via classe pai (Mais seguro)
+                    const targetBtn = document.querySelector('.buttons-history button') as HTMLElement;
+                    if (targetBtn) {
+                        targetBtn.click();
+                        return;
+                    }
+                    
+                    // Fallback via SVG (Gráfico)
+                    const allButtons = Array.from(document.querySelectorAll('button'));
+                    const graphBtn = allButtons.find(btn => btn.innerHTML.includes('<rect y="10"'));
+                    if (graphBtn) (graphBtn as HTMLElement).click();
+                });
+
+                // Espera o modal carregar
+                await this.page.waitForSelector('.history__double__center', { timeout: 8000 });
+            }
+
+            // 2. LER DADOS
             const results = await this.page.evaluate(() => {
                 const data: any[] = [];
                 const numbers = document.querySelectorAll('.history__double__center');
@@ -168,15 +255,15 @@ export class BlazeScraper {
                     const rawNum = numEl.textContent?.trim() || '0';
                     const number = parseInt(rawNum, 10);
 
-                    // Regra de cores
+                    // Regra de Cores
                     let color = 'branco';
-                    if (number >= 1 && number <= 6) color = 'vermelho';
-                    else if (number >= 7 && number <= 14) color = 'preto';
+                    if (number >= 1 && number <= 7) color = 'vermelho';
+                    else if (number >= 8 && number <= 14) color = 'preto';
 
-                    // Data e Hora
+                    // Data e Hora (Parsing manual DD/MM/YYYY)
                     const paragraphs = dateEl.querySelectorAll('p');
-                    const dateStr = paragraphs[0]?.textContent?.trim();
-                    const timeStr = paragraphs[1]?.textContent?.trim();
+                    const dateStr = paragraphs[0]?.textContent?.trim(); // "27/01/2026"
+                    const timeStr = paragraphs[1]?.textContent?.trim(); // "16:26:14"
 
                     if (dateStr && timeStr) {
                         const [day, month, year] = dateStr.split('/');
@@ -193,12 +280,28 @@ export class BlazeScraper {
                 return data;
             });
 
-            console.log(`📊 ${results.length} resultados frescos coletados.`);
+            console.log(`📊 ${results.length} resultados extraídos.`);
+
+            // 3. FECHAR MODAL
+            const closeSelector = '#parent-modal-close';
+            const closeBtn = await this.page.$(closeSelector);
+            if (closeBtn) {
+                await this.page.evaluate((sel) => {
+                    const el = document.querySelector(sel) as HTMLElement;
+                    if (el) el.click();
+                }, closeSelector);
+                
+                await new Promise(r => setTimeout(r, 300)); // Pequena pausa visual
+            }
+
             return results;
 
-        } catch (error) {
-            // Se der timeout esperando o seletor, pode ser que o site caiu ou mudou
-            console.error('⚠️ Falha ao ler dados da página (timeout ou seletor ausente).');
+        } catch (error: any) {
+            console.error(`⚠️ Falha na interação com Modal: ${error.message}`);
+            // Se der erro crítico, tenta reload para limpar estado
+            if (this.page && error.message.includes('timeout')) {
+                try { await this.page.reload({ waitUntil: 'networkidle2' }); } catch (e) {}
+            }
             throw error;
         }
     }
@@ -206,7 +309,7 @@ export class BlazeScraper {
     private async cleanAndSaveDatabase(results: BlazeResult[]): Promise<void> {
         if (results.length === 0) return;
 
-        // Inverte ordem: [Antigo -> Novo] para inserção correta
+        // Inverte [Antigo -> Novo] para inserção correta com ID incremental
         const resultsToSave = [...results].reverse(); 
 
         const connection = await pool.getConnection();
@@ -219,7 +322,7 @@ export class BlazeScraper {
             for (const result of resultsToSave) {
                 const [res] = await connection.execute(
                     'INSERT IGNORE INTO blaze_history (color, number, created_at, source) VALUES (?, ?, ?, ?)',
-                    [result.color, result.number, result.created_at, 'scraper_v2']
+                    [result.color, result.number, result.created_at, 'scraper_hybrid']
                 );
                 
                 if ((res as any).affectedRows > 0) savedCount++;
@@ -229,7 +332,7 @@ export class BlazeScraper {
                 console.log(`💾 ${savedCount} novos registros salvos.`);
             }
 
-            // Manutenção (Limpeza > 2000)
+            // Limpeza Automática (> 2000)
             const LIMIT_TO_KEEP = 2000;
             const [countRows] = await connection.execute('SELECT COUNT(*) as total FROM blaze_history');
             const total = (countRows as any[])[0].total;
@@ -257,14 +360,12 @@ export class BlazeScraper {
     }
 
     private async reconnect(): Promise<void> {
-        console.log('🔄 Tentando reconexão completa...');
+        console.log('🔄 Reconexão forçada...');
         try {
             await this.stop();
             await new Promise(resolve => setTimeout(resolve, 5000));
             await this.start();
-        } catch (error) {
-            console.error('❌ Falha fatal na reconexão:', error);
-        }
+        } catch (error) { console.error(error); }
     }
 
     isActive(): boolean { return this.isRunning; }
@@ -287,10 +388,8 @@ export class BlazeScraper {
             console.log('✅ Banco limpo.');
         } catch (error) { console.error(error); }
     }
-    
-    // Método auxiliar (já que estamos usando reload, collectNow também fará refresh)
+
     async collectNow(): Promise<BlazeResult[]> {
-        console.log('🔄 Coleta manual solicitada...');
         return await this.collectAndClean();
     }
 }
