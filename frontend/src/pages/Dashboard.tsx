@@ -4,10 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { Flame, LogOut, TrendingUp, Activity, ShieldCheck, Clock, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// --- Interfaces (Adaptadas para o seu Layout) ---
+// --- Interfaces (Sincronizadas com o Backend) ---
 interface DashboardData {
   history: {
-    id: string; // Backend envia string (UUID ou round ID)
+    id: string;
     result: string; 
     number: number;
     created_at: string;
@@ -34,26 +34,25 @@ interface DashboardData {
 const Dashboard: React.FC = () => {
   const [data, setData] = useState<DashboardData | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const { signOut, user } = useAuth(); // Usando signOut do nosso contexto corrigido
+  const { signOut, user } = useAuth();
 
   const fetchData = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      // Chamamos o endpoint correto do Backend
       const response = await api.get('/dashboard');
       const backendData = response.data;
+      const pred = backendData.prediction; // Atalho para os dados da IA
 
-      // --- ADAPTADOR (Backend -> Frontend Layout) ---
-      // Calcula porcentagens baseadas nos dados reais
+      // Calcula totais para porcentagem
       const total = backendData.stats.total || 1;
       
-      // Traduz a sugestão da IA (Português -> Inglês para o seu CSS)
+      // 1. TRADUÇÃO DA SUGESTÃO (Backend 'vermelho' -> Frontend 'red')
       let suggestion: 'red' | 'black' | 'white' | 'wait' = 'wait';
-      if (backendData.prediction?.color === 'vermelho') suggestion = 'red';
-      if (backendData.prediction?.color === 'preto') suggestion = 'black';
-      if (backendData.prediction?.color === 'branco') suggestion = 'white';
+      if (pred?.suggestion === 'vermelho') suggestion = 'red';
+      if (pred?.suggestion === 'preto') suggestion = 'black';
+      if (pred?.suggestion === 'branco') suggestion = 'white';
 
-      // Monta o objeto final para o seu Layout
+      // 2. MONTAGEM DOS DADOS REAIS
       const adaptedData: DashboardData = {
         history: backendData.history,
         stats: {
@@ -67,13 +66,11 @@ const Dashboard: React.FC = () => {
         analysis: {
           prediction: {
             suggestion: suggestion,
-            confidence: backendData.prediction?.confidence || 0,
-            reason: backendData.prediction?.message || 'Aguardando padrão...',
-            // Simulação de estratégias ativas baseadas na confiança
-            strategies: [
-              { name: 'Gale 1', active: true },
-              { name: 'Proteção Branco', active: backendData.prediction?.confidence > 80 }
-            ]
+            confidence: pred?.confidence || 0,
+            reason: pred?.reason || 'Analisando padrões de mercado...',
+            // 3. USO DAS ESTRATÉGIAS REAIS DO BACKEND
+            // Se vier vazio (modo wait), mostramos lista vazia ou padrão
+            strategies: pred?.strategies || []
           },
           lastUpdate: new Date().toISOString()
         }
@@ -89,18 +86,14 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-    // Atualiza mais rápido para capturar novas pedras
-    const interval = setInterval(fetchData, 2000); // Atualiza a cada 2s
+    // Atualiza a cada 2s para pegar o tempo real do Scraper Híbrido
+    const interval = setInterval(fetchData, 2000); 
     
-    // Notificação para novas pedras
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        fetchData();
-      }
+      if (document.visibilityState === 'visible') fetchData();
     };
     
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -109,7 +102,6 @@ const Dashboard: React.FC = () => {
 
   // --- Helpers de Estilo ---
   const getColorClass = (result: string) => {
-    // O backend retorna 'vermelho', 'preto', 'branco'
     if (result === 'vermelho') return 'bg-rose-600 text-white border-rose-800';
     if (result === 'preto') return 'bg-slate-800 text-white border-slate-700';
     return 'bg-white text-slate-900 border-slate-300';
@@ -119,14 +111,14 @@ const Dashboard: React.FC = () => {
     if (sug === 'red') return 'VERMELHO';
     if (sug === 'black') return 'PRETO';
     if (sug === 'white') return 'BRANCO';
-    return 'PRETO';
+    return 'AGUARDAR';
   };
 
   const getSuggestionStyles = (sug: string) => {
     if (sug === 'red') return { border: 'border-rose-600', text: 'text-rose-500', shadow: 'shadow-rose-900/50' };
     if (sug === 'black') return { border: 'border-slate-500', text: 'text-white', shadow: 'shadow-slate-900/50' };
     if (sug === 'white') return { border: 'border-white', text: 'text-white', shadow: 'shadow-white/50' };
-    return { border: 'border-slate-800', text: 'text-slate-500', shadow: 'shadow-none' };
+    return { border: 'border-slate-800', text: 'text-slate-500', shadow: 'shadow-none' }; // Estilo para 'wait'
   };
 
   const suggestionStyle = data ? getSuggestionStyles(data.analysis.prediction.suggestion) : { border: '', text: '', shadow: '' };
@@ -177,7 +169,7 @@ const Dashboard: React.FC = () => {
 
       <main className="p-4 sm:p-8 max-w-7xl mx-auto space-y-8">
         
-        {/* Histórico Live com Horários */}
+        {/* Histórico Live */}
         <section className="bg-slate-900 rounded-3xl p-1 border border-slate-800/50 shadow-2xl overflow-hidden relative">
           <div className="absolute top-0 left-0 w-24 h-full bg-gradient-to-r from-slate-900 to-transparent z-10 pointer-events-none" />
           <div className="absolute top-0 right-0 w-24 h-full bg-gradient-to-l from-slate-900 to-transparent z-10 pointer-events-none" />
@@ -202,7 +194,6 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Container de Histórico com Horários */}
           <div className="flex gap-4 overflow-x-auto p-4 no-scrollbar items-end scroll-smooth">
             {data.history.map((item, i) => (
               <motion.div 
@@ -211,7 +202,6 @@ const Dashboard: React.FC = () => {
                 animate={{ scale: 1, y: 0 }}
                 className="flex-shrink-0 flex flex-col items-center"
               >
-                {/* Cartão do Resultado */}
                 <div className={`
                   w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex flex-col items-center justify-center 
                   font-black text-sm shadow-lg border-b-4 relative
@@ -224,7 +214,6 @@ const Dashboard: React.FC = () => {
                     <span className="text-lg">{item.number}</span>
                   )}
                   
-                  {/* Indicador de nova pedra */}
                   {i === 0 && (
                     <motion.div 
                       animate={{ scale: [1, 1.5, 1] }}
@@ -234,19 +223,10 @@ const Dashboard: React.FC = () => {
                   )}
                 </div>
                 
-                {/* Horário */}
                 <div className="mt-2 text-center">
                   <div className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
                     {new Date(item.created_at).toLocaleTimeString('pt-BR', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit'
-                    })}
-                  </div>
-                  <div className="text-[8px] text-slate-600 mt-1">
-                    {new Date(item.created_at).toLocaleDateString('pt-BR', {
-                      day: '2-digit',
-                      month: '2-digit'
+                      hour: '2-digit', minute: '2-digit', second: '2-digit'
                     })}
                   </div>
                 </div>
@@ -258,18 +238,19 @@ const Dashboard: React.FC = () => {
         {/* Grid Principal */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* SINAL DA IA */}
+          {/* SINAL DA IA - AGORA 100% FUNCIONAL */}
           <div className="lg:col-span-2 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 rounded-[2.5rem] p-8 border border-slate-700 shadow-2xl relative overflow-hidden">
             <div className="relative z-10 h-full flex flex-col justify-between">
               
-              {/* Header Card IA */}
               <div className="flex justify-between items-start mb-8">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className={`w-2 h-2 rounded-full animate-ping ${data.analysis.prediction.suggestion === 'wait' ? 'bg-yellow-500' : 'bg-emerald-500'}`} />
                     <h3 className="text-slate-200 font-black text-xl tracking-tight">STATUS DA IA</h3>
                   </div>
-                  <p className="text-sm text-slate-400 font-medium max-w-md leading-relaxed">{data.analysis.prediction.reason}</p>
+                  <p className="text-sm text-slate-400 font-medium max-w-md leading-relaxed">
+                    {data.analysis.prediction.reason}
+                  </p>
                 </div>
                 <div className="bg-slate-950/50 backdrop-blur px-4 py-2 rounded-xl border border-slate-700 flex flex-col items-end">
                   <span className="text-[10px] text-slate-500 font-bold uppercase">Confiança</span>
@@ -279,10 +260,9 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
               
-              {/* Corpo Card IA */}
               <div className="flex flex-col md:flex-row items-center justify-between gap-10">
                 
-                {/* Bola Gigante */}
+                {/* Bola Gigante (Sugestão) */}
                 <div className="relative group cursor-default">
                   <motion.div 
                     animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.1, 0.3] }}
@@ -305,7 +285,7 @@ const Dashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Estratégias */}
+                {/* Estratégias (Vindas do Backend) */}
                 <div className="flex-1 w-full space-y-4">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4 border-b border-slate-800 pb-2">Gestão Recomendada</h4>
                   <div className="space-y-3">
