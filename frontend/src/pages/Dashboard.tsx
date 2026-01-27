@@ -119,7 +119,7 @@ const Dashboard: React.FC = () => {
     if (sug === 'red') return 'VERMELHO';
     if (sug === 'black') return 'PRETO';
     if (sug === 'white') return 'BRANCO';
-    return 'AGUARDE';
+    return 'PRETO';
   };
 
   const getSuggestionStyles = (sug: string) => {
@@ -204,7 +204,7 @@ const Dashboard: React.FC = () => {
 
           {/* Container de Histórico com Horários */}
           <div className="flex gap-4 overflow-x-auto p-4 no-scrollbar items-end scroll-smooth">
-            {data.history.slice().reverse().map((item, i) => (
+            {data.history.map((item, i) => (
               <motion.div 
                 key={`${item.id}-${i}`}
                 initial={{ scale: 0, y: 20 }}

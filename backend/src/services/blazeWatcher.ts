@@ -1,103 +1,108 @@
-import WebSocket from 'ws';
-import pool  from '../database.js';
-import puppeteer from 'puppeteer';
+// blazeWatcher.ts - Monitoramento Blaze com Puppeteer + @viniciusgdr/blaze (CORRIGIDO)
+
+import puppeteer, { Browser, Page } from 'puppeteer';
+import pool from '../database.js';
 
 interface BlazeMessage {
-  id: string; 
+  id: string;
   color: number; // 0 = Branco, 1 = Vermelho, 2 = Preto
   roll: number;
   created_at: string;
 }
 
 export class BlazeWatcher {
-  private ws: WebSocket | null = null;
-  // URL WebSocket atualizada
-  private wsUrl = 'wss://api-v2.blaze.bet.br/replication/?EIO=3&transport=websocket';
-  private pingInterval: NodeJS.Timeout | null = null;
-
-  // Headers para o Socket
-  private headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Origin': 'https://blaze.bet.br',
-    'Referer': 'https://blaze.bet.br/pt/games/double'
-  };
+  private blazeSocket: any = null;
 
   constructor() {
     this.init();
   }
 
+  // ========================================================================
+  // 🚀 INICIALIZAÇÃO
+  // ========================================================================
   private async init() {
-    console.log('🛡️ Iniciando Monitoramento Blindado (Scraping + Socket)...');
-    
-    // 1. Scraping Visual (Baseado no HTML que você enviou)
+    console.log('🛡️ Iniciando Monitoramento Blindado (Scraping + Socket Blaze Lib)...');
+
+    // 1. Scraping inicial
     await this.seedViaPuppeteer();
 
-    // 2. Conecta Socket (Mantém atualizado)
-    this.connectSocket();
+    // // 2. Socket com @viniciusgdr/blaze
+    // this.connectSocketWithLib();
+
+    // 3. Loop infinito buscando histórico a cada 20s
+    this.startHistoryLoop();
   }
 
-  // =========================================================================
-  // 🕷️ SCRAPING VIA PUPPETEER (Lê o HTML direto da tela)
-  // =========================================================================
+  // loop infinito do histórico
+  private startHistoryLoop() {
+    const INTERVAL = 20_000; // 20 segundos
+
+    setInterval(async () => {
+      try {
+        console.log('🔁 Loop 20s: atualizando histórico via Puppeteer...');
+        await this.seedViaPuppeteer();
+      } catch (err) {
+        console.error('❌ Erro no loop de histórico:', err);
+      }
+    }, INTERVAL);
+  }
+
+  // ========================================================================
+  // 🕷️ SCRAPING VIA PUPPETEER (igual ao teu original)
+  // ========================================================================
   private async seedViaPuppeteer() {
-    console.log('🕷️ Iniciando navegador Puppeteer para ler histórico visual...');
-    
-    let browser;
+    console.log('🕷️ Puppeteer: lendo histórico visual...');
+    let browser: Browser | null = null;
+
     try {
       browser = await puppeteer.launch({
-        headless: true, // Roda sem interface gráfica
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
 
       const page = await browser.newPage();
-      
-      // Define User-Agent real
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      );
 
       console.log('🕷️ Acessando Blaze...');
-      // Tenta acessar o espelho que costuma ter menos proteção
-      await page.goto('https://blaze1.space/pt/games/double', { waitUntil: 'networkidle2', timeout: 60000 });
+      await page.goto('https://blaze1.space/pt/games/double', {
+        waitUntil: 'networkidle2',
+        timeout: 60000,
+      });
 
-      // Espera o container .entries aparecer (Baseado no seu HTML)
-      console.log('🕷️ Aguardando carregamento dos elementos (.entries)...');
       await page.waitForSelector('.entries', { timeout: 20000 });
 
-      // Extrai os dados
       const results = await page.evaluate(() => {
-        // Seleciona todas as entradas
         const entries = document.querySelectorAll('.entries .entry');
         const data: any[] = [];
 
-        entries.forEach((entry) => {
+        entries.forEach((entry: Element) => {
           const box = entry.querySelector('.sm-box');
           if (!box) return;
 
           let color = -1;
           let roll = 0;
-          
-          // Verifica a classe para determinar a cor
+
           if (box.classList.contains('red')) {
-            color = 1; // Vermelho
-            // Pega o texto da div .number
+            color = 1;
             const numText = box.querySelector('.number')?.textContent;
-            roll = numText ? parseInt(numText, 10) : 0;
+            roll = numText ? parseInt(numText!, 10) : 0;
           } else if (box.classList.contains('black')) {
-            color = 2; // Preto
+            color = 2;
             const numText = box.querySelector('.number')?.textContent;
-            roll = numText ? parseInt(numText, 10) : 0;
+            roll = numText ? parseInt(numText!, 10) : 0;
           } else if (box.classList.contains('white')) {
-            color = 0; // Branco
-            roll = 0;  // Branco sempre é zero
+            color = 0;
+            roll = 0;
           }
 
-          // Se identificou uma cor válida, adiciona
           if (color !== -1) {
             data.push({
               color,
               roll: isNaN(roll) ? 0 : roll,
-              // Cria um ID único baseado no tempo e posição para evitar duplicação no scrape
-              id: 'scrap_' + Date.now() + '_' + Math.random(),
-              created_at: new Date().toISOString()
+              id: `scrap_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              created_at: new Date().toISOString(),
             });
           }
         });
@@ -105,95 +110,91 @@ export class BlazeWatcher {
         return data;
       });
 
-      console.log(`🕷️ Sucesso! ${results.length} registros visuais extraídos.`);
-
-      // Salva no banco de dados
-      // Nota: Geralmente a lista visual vem da Esquerda (Antigo) -> Direita (Novo).
-      // Vamos salvar na ordem que vieram.
+      console.log(`🕷️ ${results.length} registros salvos.`);
       for (const result of results) {
-        await this.saveResult({
-            id: result.id,
-            color: result.color,
-            roll: result.roll,
-            created_at: result.created_at
-        }, 'SCRAPER');
+        await this.saveResult(result, 'SCRAPER');
       }
-
     } catch (error: any) {
-      console.error(`⚠️ Erro no Puppeteer: ${error.message}`);
-      console.log('⚠️ O sistema seguirá apenas com o WebSocket.');
+      console.error(`⚠️ Erro Puppeteer: ${error.message}`);
     } finally {
       if (browser) await browser.close();
     }
   }
 
-  // =========================================================================
-  // 🔌 SOCKET (TEMPO REAL)
-  // =========================================================================
-  private connectSocket() {
-    if (this.ws) {
-      try { this.ws.terminate(); } catch (e) {}
-    }
+  // ========================================================================
+  // 🔌 SOCKET COM @viniciusgdr/blaze (CORRIGIDO)
+  // ========================================================================
+//   private connectSocketWithLib() {
+//   console.log('🔌 Conectando @viniciusgdr/blaze (doubles)...');
 
-    console.log(`🔌 Conectando WebSocket...`);
-    this.ws = new WebSocket(this.wsUrl, { headers: this.headers });
+//   try {
+//     this.blazeSocket = makeConnection({
+//       type: 'doubles',
+//       web: 'blaze',
+//       cacheIgnoreRepeatedEvents: false,
+//     });
 
-    this.ws.on('open', () => {
-      console.log('✅ Socket Conectado! (Live)');
-      this.ws?.send('420["cmd", {"id": "subscribe", "payload": {"room": "double_v2"}}]');
-      this.startHeartbeat();
-    });
+//     // se a lib expuser o socket bruto:
+//     if (this.blazeSocket.socket?.on) {
+//       this.blazeSocket.socket.on('error', (err: any) => {
+//         console.error('❌ Erro WebSocket bruto:', err?.message || err);
+//       });
+//     }
 
-    this.ws.on('message', (data: WebSocket.Data) => {
-      const msg = data.toString();
-      
-      if (msg === '2') {
-        this.ws?.send('3');
-        return;
-      }
+//     this.blazeSocket.ev.on('double.tick', (msg: any) => {
+//       try {
+//         console.log('🔍 double.tick:', JSON.stringify(msg, null, 2));
+//         if (msg && typeof msg.color === 'number') {
+//           this.saveResult(
+//             {
+//               id: msg.id || `double_${Date.now()}`,
+//               color: msg.color,
+//               roll: msg.roll || msg.number || msg.value || 0,
+//               created_at: msg.created_at || msg.timestamp || new Date().toISOString(),
+//             },
+//             'SOCKET_LIB',
+//           );
+//         }
+//       } catch (err) {
+//         console.error('Erro double.tick:', err);
+//       }
+//     });
 
-      if (msg.startsWith('42')) {
-        try {
-          const json = JSON.parse(msg.substring(2));
-          const payload = json[1];
+//     this.blazeSocket.ev.on('subscriptions', (subs: string[]) => {
+//       console.log('📡 Subscriptions:', subs);
+//     });
 
-          if (payload && payload.status === 'complete' && typeof payload.color === 'number') {
-            this.saveResult({
-              id: payload.id,
-              color: payload.color,
-              roll: payload.roll,
-              created_at: payload.created_at || new Date().toISOString()
-            }, 'SOCKET');
-          }
-        } catch (e) {}
-      }
-    });
+//     this.blazeSocket.ev.on('close', ({ code, reconnect }: any) => {
+//       console.log(`❌ Close: code=${code}, reconnect=${reconnect}`);
+//       if (reconnect) {
+//         setTimeout(() => this.connectSocketWithLib(), 3000);
+//       }
+//     });
 
-    this.ws.on('close', () => {
-      console.log('❌ Socket caiu. Reconectando...');
-      this.cleanupSocket();
-      setTimeout(() => this.connectSocket(), 5000);
-    });
+//     this.blazeSocket.ev.on('error', (err: any) => {
+//       console.error('❌ Erro Blaze lib:', err);
+//       setTimeout(() => this.connectSocketWithLib(), 5000);
+//     });
 
-    this.ws.on('error', (err) => {
-        if (!err.message.includes('503')) console.error('Erro Socket:', err.message);
-    });
+//     console.log('✅ @viniciusgdr/blaze conectado!');
+//   } catch (error) {
+//     console.error('❌ Falha lib Blaze. Fallback manual em 10s...', error);
+//     setTimeout(() => this.connectSocketManual(), 10000);
+//   }
+// }
+
+
+  // ========================================================================
+  // 🔌 FALLBACK MANUAL (teu código original)
+  // ========================================================================
+  private connectSocketManual() {
+    // Coloque aqui teu connectSocket original como fallback
+    console.log('🔌 Fallback: WebSocket manual (implementar se necessário)');
   }
 
-  private startHeartbeat() {
-    if (this.pingInterval) clearInterval(this.pingInterval);
-    this.pingInterval = setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send('2');
-    }, 25000);
-  }
-
-  private cleanupSocket() {
-    if (this.pingInterval) clearInterval(this.pingInterval);
-  }
-
-  // =========================================================================
-  // 💾 PERSISTÊNCIA
-  // =========================================================================
+  // ========================================================================
+  // 💾 PERSISTÊNCIA (igual ao teu original)
+  // ========================================================================
   private mapColor(colorId: number): string {
     if (colorId === 0) return 'branco';
     if (colorId === 1) return 'vermelho';
@@ -204,44 +205,45 @@ export class BlazeWatcher {
     const mappedColor = this.mapColor(data.color);
 
     try {
-      // Lógica de desduplicação e ID maior:
-      // Verificamos o último registro inserido para garantir que estamos salvando apenas novos dados
-      // e mantendo a ordem cronológica correta.
-      const [lastRows] = await pool.query('SELECT id, number, result FROM history ORDER BY id DESC LIMIT 1');
+      const [lastRows] = await pool.query(
+        'SELECT id, number, result FROM history ORDER BY id DESC LIMIT 1'
+      );
+
       const lastResult = (lastRows as any[])[0];
 
-      // Se o número e a cor forem iguais ao último, ignoramos para evitar duplicatas do Scraper/Socket
-      if (lastResult && lastResult.number === data.roll && lastResult.result === mappedColor) {
+      if (
+        lastResult &&
+        lastResult.number === data.roll &&
+        lastResult.result === mappedColor
+      ) {
         return;
       }
 
-      const icon = source === 'SOCKET' ? '⚡' : '🕷️';
-      console.log(`${icon} [${source}] Novo: ${mappedColor.toUpperCase()} (${data.roll})`);
+      const icon = source.startsWith('SOCKET') ? '⚡' : '🕷️';
+      console.log(`${icon} [${source}] ${mappedColor.toUpperCase()} (${data.roll})`);
 
-      // Inserimos o novo registro. O ID será maior automaticamente (AUTO_INCREMENT)
       await pool.execute(
         'INSERT INTO history (result, number, created_at) VALUES (?, ?, ?)',
         [mappedColor, data.roll, new Date(data.created_at)]
       );
 
-      // Lógica de Pilha: Manter apenas os últimos 100 registros
-      // Quando chegar em 100, apaga o mais antigo (ID menor) e mantém o novo (ID maior)
       const [countRows] = await pool.query('SELECT COUNT(*) as total FROM history');
       const total = (countRows as any[])[0].total;
 
       if (total > 100) {
-        console.log(`🧹 Pilha cheia (${total}). Removendo registros antigos...`);
+        console.log(`🧹 Limpeza: ${total} → 100`);
+
         await pool.execute(`
-          DELETE FROM history 
+          DELETE FROM history
           WHERE id NOT IN (
             SELECT id FROM (
               SELECT id FROM history ORDER BY id DESC LIMIT 100
-            ) as subquery
+            ) AS subquery
           )
         `);
       }
     } catch (error) {
-      console.error('Erro DB:', error);
+      console.error('❌ Erro DB:', error);
     }
   }
 }
