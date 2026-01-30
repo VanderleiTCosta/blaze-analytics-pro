@@ -1,5 +1,6 @@
 # Dockerfile para o Backend (com suporte a Puppeteer/Chromium)
-FROM node:18-slim
+# Atualizado para Node 20 para compatibilidade com dependências
+FROM node:20-slim
 
 # Instalar dependências do sistema necessárias para o Chromium
 RUN apt-get update && apt-get install -y \
@@ -46,18 +47,20 @@ RUN apt-get update && apt-get install -y \
 # Definir diretório de trabalho
 WORKDIR /usr/src/app
 
-# Copiar apenas os arquivos de dependências primeiro (otimização de cache)
+# Copiar apenas os arquivos de dependências primeiro
 COPY package*.json ./
 
-# Instalar dependências do Node.js
+# Instalar dependências (incluindo devDependencies para o build)
 RUN npm install
 
-# Copiar o restante do código do backend
+# Copiar o restante do código
 COPY . .
+
+# Garantir permissão de execução para binários locais do npm
+RUN chmod -R +x node_modules/.bin
 
 # Compilar o TypeScript para JavaScript
 RUN npm run build
 
 # O Render define a porta automaticamente via variável de ambiente PORT
-# O comando abaixo inicia a aplicação compilada
 CMD [ "npm", "run", "start" ]
