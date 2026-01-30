@@ -1,24 +1,28 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
+// CORREÇÃO CRÍTICA: "extends Request"
+// Isso diz ao TS: "AuthRequest tem tudo que uma Request tem, MAIS a propriedade user"
 export interface AuthRequest extends Request {
-  user?: any; // Ou o tipo do seu payload do token
+  user?: any;
 }
 
-export const verifyToken = (req: AuthRequest, res: Response, next: NextFunction) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
+export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction): void => {
+  // Agora o TS sabe que 'req' tem 'headers'
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
 
-    if (!token) {
-        return res.status(401).json({ message: 'Acesso negado. Token não fornecido.' });
-    }
+  if (!token) {
+    res.sendStatus(401); // Unauthorized
+    return;
+  }
 
-    try {
-        const secret = process.env.JWT_SECRET || 'default_secret';
-        const decoded = jwt.verify(token, secret);
-        req.user = decoded;
-        next();
-    } catch (error) {
-        return res.status(403).json({ message: 'Token inválido ou expirado.' });
+  jwt.verify(token, process.env.JWT_SECRET as string, (err: any, user: any) => {
+    if (err) {
+      res.sendStatus(403); // Forbidden
+      return;
     }
+    req.user = user;
+    next();
+  });
 };
