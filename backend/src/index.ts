@@ -477,6 +477,7 @@ app.post('/api/scraper/collect', authenticateToken, requireAdmin, async (req: Re
   }
 });
 
+
 // --- INICIALIZAÇÃO DO SCRAPER ---
 const blazeScraper = new BlazeScraper();
 
