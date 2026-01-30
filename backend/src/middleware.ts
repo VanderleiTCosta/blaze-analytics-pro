@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-interface AuthRequest extends Request {
-    user?: any;
+export interface AuthRequest extends Request {
+  user?: any; // Ou o tipo do seu payload do token
 }
 
 export const verifyToken = (req: AuthRequest, res: Response, next: NextFunction) => {
